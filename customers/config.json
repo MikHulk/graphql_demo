@@ -1,0 +1,42 @@
+{
+  "db_url": "postgresql+asyncpg://postgres:postgres@localhost/customers",
+  "db_engine": {
+  },
+  "logging": {
+    "version": 1,
+    "disable_existing_loggers": false,
+    "formatters": {
+      "simple": {
+        "format": "%(asctime)s %(levelname)s %(name)s %(message)s"
+      },
+      "extra": {
+        "format": "%(asctime)-16s %(name)-8s %(filename)-12s %(lineno)-6s %(funcName)-30s %(levelname)-8s\n%(message)s",
+        "datefmt": "%m-%d %H:%M:%S"
+      }
+    },
+    "handlers": {
+      "console": {
+        "class": "logging.StreamHandler",
+        "level": "DEBUG",
+        "formatter": "simple",
+        "stream": "ext://sys.stdout"
+      }
+    },
+    "loggers": {
+      "customers": {
+        "level": "DEBUG",
+        "handlers": [
+          "console"
+        ],
+        "propagate": "no"
+      },
+      "sqlalchemy.engine": {
+        "level": "WARNING",
+        "handlers": [
+          "console"
+        ],
+        "propagate": "no"
+      }
+    }
+  }
+}
