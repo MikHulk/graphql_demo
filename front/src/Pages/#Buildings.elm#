@@ -1,0 +1,325 @@
+module Pages.Buildings exposing (Model, Msg, page)
+
+import CustomersApi.Object
+import CustomersApi.Object.Building as Building
+import CustomersApi.Object.Customer as Customer
+import CustomersApi.Object.Position as Position
+import CustomersApi.Object.Site as Site
+import CustomersApi.Query as Query
+import CustomersApi.Scalar exposing (Decimal(..))
+import Debug
+import Element exposing (Element)
+import Element.Background as Background
+import Element.Border as Border
+import Element.Font as Font
+import Element.Input as Input
+import Gen.Params.Example exposing (Params)
+import Graphql.Http
+import Graphql.Operation exposing (RootQuery)
+import Graphql.OptionalArgument exposing (OptionalArgument(..))
+import Graphql.SelectionSet as SelectionSet exposing (SelectionSet)
+import Html.Attributes as Attr exposing (style)
+import Page
+import RemoteData exposing (RemoteData)
+import Request exposing (Request)
+import Shared
+import UI exposing (layout)
+import View exposing (View)
+
+
+
+-- INIT
+
+
+parseDecimal : Decimal -> String
+parseDecimal (Decimal string) =
+    string
+
+
+type alias Response =
+    List Building
+
+
+type alias Building =
+    { label : String
+    , position : Maybe Position
+    , site : Site
+    }
+
+
+type alias Site =
+    { label : String
+    , owner : Customer
+    }
+
+
+type alias Position =
+    { longitude : String
+    , latitude : String
+    }
+
+
+type alias Area =
+    { bottom_corner : Position
+    , top_corner : Position
+    }
+
+
+type alias Customer =
+    { name : String }
+
+
+type alias RData =
+    RemoteData (Graphql.Http.Error Response) Response
+
+
+type alias Search =
+    { customerName : Maybe String
+    , area : Maybe Area
+    }
+
+
+type alias Model =
+    { status : RData
+    , buildings : List Building
+    , searching : Search
+    }
+
+
+makeRequest : Search -> Cmd Msg
+makeRequest { customerName, area } =
+    case ( customerName, area ) of
+        ( Just name, _ ) ->
+            query (\optionals -> { optionals | customerName = Present ("%" ++ name ++ "%") })
+                |> Graphql.Http.queryRequest "http://localhost:8000"
+                |> Graphql.Http.send (RemoteData.fromResult >> GotResponse)
+
+        _ ->
+            query identity
+                |> Graphql.Http.queryRequest "http://localhost:8000"
+                |> Graphql.Http.send (RemoteData.fromResult >> GotResponse)
+
+
+query : (Query.BuildingsOptionalArguments -> Query.BuildingsOptionalArguments) -> SelectionSet Response RootQuery
+query args =
+    Query.buildings args buildingInfoSelection
+
+
+buildingInfoSelection : SelectionSet Building CustomersApi.Object.Building
+buildingInfoSelection =
+    SelectionSet.succeed Building
+        |> SelectionSet.with Building.label
+        |> SelectionSet.with
+            (SelectionSet.succeed Position
+                |> SelectionSet.with (SelectionSet.map parseDecimal Position.long)
+                |> SelectionSet.with (SelectionSet.map parseDecimal Position.lat)
+                |> Building.position
+            )
+        |> SelectionSet.with
+            (SelectionSet.succeed Site
+                |> SelectionSet.with Site.label
+                |> SelectionSet.with
+                    (SelectionSet.succeed Customer
+                        |> SelectionSet.with Customer.name
+                        |> Site.owner
+                    )
+                |> Building.site
+            )
+
+
+init : ( Model, Cmd Msg )
+init =
+    let
+        model =
+            { status = RemoteData.NotAsked
+            , buildings = []
+            , searching =
+                { customerName = Nothing
+                , area = Nothing
+                }
+            }
+    in
+    ( model
+    , makeRequest model.searching
+    )
+
+
+page : Shared.Model -> Request -> Page.With Model Msg
+page shared req =
+    Page.element
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+
+-- UPDATE
+
+
+type Msg
+    = GotResponse RData
+    | SearchCustomer String
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        GotResponse rdata ->
+            case rdata of
+                RemoteData.Success buildings ->
+                    ( { model | status = rdata, buildings = buildings }, Cmd.none )
+
+                _ ->
+                    ( { model | status = rdata }, Cmd.none )
+
+        SearchCustomer term ->
+            let
+                old =
+                    model.searching
+
+                new =
+                    if term == "" then
+                        { old | customerName = Nothing }
+
+                    else
+                        { old | customerName = Just term }
+            in
+            ( { model | searching = new }, makeRequest new )
+
+
+
+-- SUBSCRIPTIONS
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.none
+
+
+
+-- VIEW
+
+
+mainElem : Model -> Element Msg
+mainElem model =
+    Element.row
+        [ Element.width Element.fill
+        , Element.spacing 5
+        , Element.paddingXY 15 0
+        ]
+        [ searchForm model
+        , buildingList model.buildings
+        ]
+
+
+searchForm : Model -> Element Msg
+searchForm model =
+    Input.text
+        [ Element.width (Element.px 300)
+        , Element.alignTop
+        , Element.padding 5
+        ]
+        { onChange = SearchCustomer
+        , text =
+            case model.searching.customerName of
+                Just name ->
+                    name
+
+                _ ->
+                    ""
+        , placeholder =
+            Just <|
+                Input.placeholder [] <|
+                    Element.text "placeholder"
+        , label = Input.labelAbove [] <| Element.text "customer"
+        }
+
+
+view : Model -> View Msg
+view model =
+    { title = "Beebryte - buildings"
+    , body = layout "Gestion des bâtiments" <| mainElem model
+    }
+
+
+formatPos : Maybe Position -> String
+formatPos position =
+    case position of
+        Just coord ->
+            let
+                long =
+                    coord.longitude
+
+                lat =
+                    coord.latitude
+            in
+            "(" ++ long ++ ", " ++ lat ++ ")"
+
+        _ ->
+            ""
+
+
+buildingsHeader : Element msg
+buildingsHeader =
+    Element.row
+        [ Element.spacing 45
+        , Background.color (Element.rgb 0.9 0.9 0.9)
+        , Font.size 20
+        , Element.paddingXY 2 5
+        , Element.width Element.fill
+        , Border.solid
+        , Border.widthXY 0 1
+        , Border.shadow
+            { offset = ( 0.0, 2 )
+            , size = 0.0
+            , blur = 2.0
+            , color = Element.rgba 0 0 0 0.6
+            }
+        ]
+        [ Element.el [ Element.width (Element.px 100) ] <| Element.text "customer"
+        , Element.el [ Element.width (Element.px 200) ] <| Element.text "site"
+        , Element.el [ Element.width (Element.px 250) ] <| Element.text "building"
+        , Element.el [ Element.width (Element.px 300) ] <| Element.text "position"
+        ]
+
+
+buildingRow : Building -> Element msg
+buildingRow building =
+    Element.row
+        [ Element.spacing 45
+        , Element.padding 2
+        ]
+        [ Element.el [ Element.width (Element.px 100) ] <| Element.text building.site.owner.name
+        , Element.el [ Element.width (Element.px 200) ] <| Element.text building.site.label
+        , Element.el [ Element.width (Element.px 250) ] <| Element.text building.label
+        , Element.el [ Element.width (Element.px 300) ] <| Element.text <| formatPos building.position
+        ]
+
+
+buildingList : List Building -> Element msg
+buildingList buildings =
+    Element.column
+        [ Font.size 15
+        , Element.centerX
+        , Element.spacing 1
+        , Border.solid
+        , Border.width 1
+        ]
+    <|
+        [ buildingsHeader
+        , Element.column
+            [ Element.scrollbarY
+            , Element.height (Element.px 600)
+            , Element.padding 5
+            , Border.innerShadow
+                { offset = ( 1, 1 )
+                , size = 0.0
+                , blur = 4.0
+                , color = Element.rgba 0 0 0 0.6
+                }
+            ]
+          <|
+            List.map buildingRow buildings
+        ]
